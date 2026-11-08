@@ -1,0 +1,9 @@
+{
+  "name": "majlis",
+  "version": "1.0.0",
+  "description": "Small self-hosted web meeting tool: video, screen share, invite links, recording, live transcript and Claude meeting notes.",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "ws": "^8.18.0" }
+}

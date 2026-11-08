@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Majlis</title>
+<style>
+  :root { --bg:#12151b; --panel:#1b2029; --line:#2b3340; --text:#e8ecf2; --muted:#93a0b4; --accent:#4f8cff; --red:#e5484d; --green:#30a46c; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f3f5f9; --panel:#fff; --line:#d9dfe9; --text:#18202c; --muted:#5b687c; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  button, input, select, textarea { font:inherit; color:inherit; }
+  button { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 14px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { background:var(--red); border-color:var(--red); color:#fff; }
+  button.on { background:var(--green); border-color:var(--green); color:#fff; }
+  input, select, textarea { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:9px 12px; width:100%; }
+  .center { max-width:440px; margin:12vh auto; padding:0 16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; }
+  h1 { font-size:22px; margin:0 0 4px; } .muted { color:var(--muted); font-size:13px; }
+  .row { display:flex; gap:8px; margin-top:12px; } .row > * { flex:1; }
+  #room { display:none; height:100vh; grid-template-rows:auto 1fr auto; }
+  header { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header .title { font-weight:600; } header .sp { flex:1; }
+  .badge { background:var(--red); color:#fff; padding:2px 10px; border-radius:99px; font-size:12px; font-weight:600; display:none; }
+  main { display:grid; grid-template-columns:1fr; min-height:0; }
+  main.withpanel { grid-template-columns:1fr 360px; }
+  #stage { display:grid; gap:8px; padding:8px; min-height:0; grid-auto-rows:1fr; }
+  #stage.has-share { grid-template-columns:1fr; grid-template-rows:1fr 120px; }
+  #stage.has-share .tile { display:none; } #stage.has-share .tile.sharing { display:block; grid-row:1; }
+  #stage.has-share .strip { display:none; }
+  .tile { position:relative; background:#000; border-radius:10px; overflow:hidden; min-height:0; }
+  .tile video { width:100%; height:100%; object-fit:contain; background:#000; }
+  .tile .label { position:absolute; left:8px; bottom:8px; background:rgba(0,0,0,.6); color:#fff; padding:2px 8px; border-radius:6px; font-size:12px; }
+  #side { border-left:1px solid var(--line); background:var(--panel); display:none; flex-direction:column; min-height:0; }
+  main.withpanel #side { display:flex; }
+  #side h3 { margin:0; padding:12px 14px; font-size:14px; border-bottom:1px solid var(--line); }
+  #transcript, #notes { flex:1; overflow:auto; padding:12px 14px; font-size:13px; white-space:pre-wrap; min-height:80px; }
+  #notes { border-top:1px solid var(--line); }
+  #side .row { padding:0 14px 12px; margin:0; }
+  footer { display:flex; gap:8px; justify-content:center; padding:10px; border-top:1px solid var(--line); flex-wrap:wrap; }
+  .toast { position:fixed; bottom:70px; left:50%; transform:translateX(-50%); background:#000c; color:#fff; padding:8px 14px; border-radius:8px; display:none; z-index:9; }
+</style>
+</head>
+<body>
+
+<!-- LOBBY -->
+<div id="lobby" class="center">
+  <div class="card">
+    <h1>Majlis <span style="font-weight:400;color:var(--muted)">مجلس</span></h1>
+    <div class="muted">Video, screen share, recording and Claude meeting notes.</div>
+    <div class="row"><input id="lobbyName" placeholder="Your name" maxlength="40"></div>
+    <div class="row"><input id="lobbyTitle" placeholder="Meeting title (optional)" maxlength="80"></div>
+    <div class="row"><button class="primary" id="createBtn">Start a new meeting</button></div>
+    <div class="row"><input id="joinCode" placeholder="…or paste a meeting link / code"><button id="joinBtn" style="flex:0 0 auto">Join</button></div>
+  </div>
+</div>
+
+<!-- PRE-JOIN (when opening an invite link) -->
+<div id="prejoin" class="center" style="display:none">
+  <div class="card">
+    <h1 id="pjTitle">Join meeting</h1>
+    <div class="muted" id="pjRoom"></div>
+    <div class="row"><input id="pjName" placeholder="Your name" maxlength="40"></div>
+    <div class="row" id="pjCodeRow" style="display:none"><input id="pjCode" type="password" placeholder="Team access code"></div>
+    <div class="row"><button class="primary" id="pjJoin">Join now</button></div>
+    <div class="muted" id="pjErr" style="color:var(--red);margin-top:10px"></div>
+  </div>
+</div>
+
+<!-- ROOM -->
+<div id="room">
+  <header>
+    <span class="title" id="roomTitle">Meeting</span>
+    <span class="badge" id="recBadge">● REC</span>
+    <span class="sp"></span>
+    <button id="inviteBtn">Invite</button>
+  </header>
+  <main id="main">
+    <div id="stage"></div>
+    <aside id="side">
+      <h3>Live transcript</h3>
+      <div id="transcript" class="muted">Turn on “Transcript” to capture what is said. Each person’s browser transcribes their own voice (Chrome or Edge).</div>
+      <div class="row">
+        <select id="lang" title="Speaking language">
+          <option value="en-US">English</option><option value="ar-EG">العربية</option><option value="ja-JP">日本語</option>
+        </select>
+        <button id="dlTranscript">Download</button>
+      </div>
+      <h3>Claude notes</h3>
+      <div id="notes" class="muted">When the meeting ends, press “Claude notes” to get a summary, decisions and action items.</div>
+      <div class="row"><button class="primary" id="notesBtn">Claude notes</button><button id="dlNotes">Download</button></div>
+    </aside>
+  </main>
+  <footer>
+    <button id="micBtn">Mute</button>
+    <button id="camBtn">Camera off</button>
+    <button id="shareBtn">Share screen</button>
+    <button id="recBtn">Record</button>
+    <button id="trBtn">Transcript</button>
+    <button id="panelBtn">Panel</button>
+    <button class="danger" id="leaveBtn">Leave</button>
+  </footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = { get:k => { try { return localStorage.getItem(k) || ''; } catch { return ''; } }, set:(k,v) => { try { localStorage.setItem(k,v); } catch {} } };
+const toast = (t, ms=2500) => { const el=$('toast'); el.textContent=t; el.style.display='block'; clearTimeout(toast.t); toast.t=setTimeout(()=>el.style.display='none',ms); };
+const rid = () => { const c='abcdefghjkmnpqrstuvwxyz23456789'; const p=()=>Array.from({length:4},()=>c[Math.floor(Math.random()*c.length)]).join(''); return `${p()}-${p()}`; };
+const roomFromPath = () => location.pathname.startsWith('/r/') ? decodeURIComponent(location.pathname.slice(3)) : '';
+
+let CFG = { iceServers:[{urls:'stun:stun.l.google.com:19302'}], needsCode:false, claude:false };
+fetch('/config').then(r=>r.json()).then(c=>{ CFG=c; $('pjCodeRow').style.display = c.needsCode ? '' : 'none'; }).catch(()=>{});
+
+// ---------- Lobby ----------
+$('lobbyName').value = store.get('name'); $('pjName').value = store.get('name'); $('pjCode').value = store.get('code');
+$('createBtn').onclick = () => {
+  const n = $('lobbyName').value.trim(); if (!n) return $('lobbyName').focus();
+  store.set('name', n); const t = $('lobbyTitle').value.trim();
+  location.href = '/r/' + rid() + (t ? '?t=' + encodeURIComponent(t) : '');
+};
+$('joinBtn').onclick = () => {
+  const v = $('joinCode').value.trim(); if (!v) return;
+  const m = v.match(/\/r\/([a-zA-Z0-9-]+)/); location.href = '/r/' + (m ? m[1] : v.replace(/[^a-zA-Z0-9-]/g,''));
+};
+const ROOM = roomFromPath();
+const TITLE = new URLSearchParams(location.search).get('t') || '';
+if (ROOM) { $('lobby').style.display='none'; $('prejoin').style.display='block'; $('pjRoom').textContent = 'Meeting code: ' + ROOM; if (TITLE) $('pjTitle').textContent = TITLE; }
+
+// ---------- State ----------
+let ws, myId, myName, localStream, screenStream, sharing = false, micOn = true, camOn = true;
+const peers = new Map();          // id -> {pc, name, stream, polite, making, ignore, tile, video, sharing}
+const transcriptLines = [];       // {t, name, text}
+let notesMd = '';
+
+// ---------- Join ----------
+$('pjJoin').onclick = async () => {
+  const name = $('pjName').value.trim(); if (!name) return $('pjName').focus();
+  const code = $('pjCode').value; store.set('name', name); if (code) store.set('code', code);
+  myName = name; $('pjErr').textContent = '';
+  try { localStream = await navigator.mediaDevices.getUserMedia({ audio:{echoCancellation:true,noiseSuppression:true}, video:{width:1280,height:720} }); }
+  catch (e) {
+    try { localStream = await navigator.mediaDevices.getUserMedia({ audio:true }); camOn=false; toast('No camera found. Joining with audio only.'); }
+    catch (e2) { $('pjErr').textContent = 'Cannot access microphone: ' + e2.message; return; }
+  }
+  connect(code);
+};
+
+function connect(code) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws?room=${encodeURIComponent(ROOM)}&name=${encodeURIComponent(myName)}&code=${encodeURIComponent(code||'')}`);
+  ws.onclose = e => {
+    if (!$('room').style.display || $('room').style.display === 'none') {
+      localStream?.getTracks().forEach(t=>t.stop());
+      $('pjErr').textContent = e.code===4001 ? 'Wrong access code.' : e.code===4003 ? 'This meeting is full.' : 'Could not connect to the meeting server.';
+    } else { toast('Disconnected from the server.', 6000); }
+  };
+  ws.onmessage = ev => onServerMsg(JSON.parse(ev.data));
+}
+const wsSend = m => ws && ws.readyState === 1 && ws.send(JSON.stringify(m));
+
+function enterRoom() {
+  $('prejoin').style.display = 'none'; $('room').style.display = 'grid';
+  $('roomTitle').textContent = (TITLE || 'Meeting') + ' · ' + ROOM;
+  addTile('me', myName + ' (you)', localStream, true); layout();
+  updateButtons();
+}
+
+async function onServerMsg(m) {
+  if (m.type === 'welcome') {
+    myId = m.id; enterRoom();
+    for (const p of m.peers) createPeer(p.id, p.name);         // existing peers: we are the new one
+  } else if (m.type === 'peer-joined') {
+    createPeer(m.id, m.name);
+    if (sharing) wsSend({ type:'sharing', on:true });
+    if (recorder) wsSend({ type:'recording', on:true });
+    toast(m.name + ' joined');
+  } else if (m.type === 'peer-left') {
+    const p = peers.get(m.id); if (p) { toast(p.name + ' left'); p.pc.close(); p.tile.remove(); peers.delete(m.id); layout(); }
+  } else if (m.type === 'signal') {
+    await onSignal(m.from, m.data);
+  } else if (m.type === 'sharing') {
+    const p = peers.get(m.from); if (p) { p.sharing = m.on; p.tile.classList.toggle('sharing', m.on); layout(); }
+  } else if (m.type === 'recording') {
+    remoteRec[m.from] = m.on; updateRecBadge();
+  } else if (m.type === 'transcript') {
+    addLine(m.name, m.text);
+  }
+}
+
+// ---------- WebRTC (perfect negotiation) ----------
+function createPeer(id, name) {
+  const pc = new RTCPeerConnection({ iceServers: CFG.iceServers });
+  const p = { pc, name, polite: myId > id, making:false, ignore:false, stream:null, sharing:false };
+  peers.set(id, p);
+  const video = (sharing && screenStream) ? screenStream.getVideoTracks()[0] : localStream.getVideoTracks()[0];
+  localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
+  if (video) pc.addTrack(video, localStream);
+  pc.onicecandidate = e => e.candidate && wsSend({ type:'signal', to:id, data:{ candidate:e.candidate } });
+  pc.onnegotiationneeded = async () => {
+    try { p.making = true; await pc.setLocalDescription(); wsSend({ type:'signal', to:id, data:{ description:pc.localDescription } }); }
+    catch (e) { console.warn(e); } finally { p.making = false; }
+  };
+  pc.ontrack = e => {
+    p.stream = e.streams[0] || new MediaStream([e.track]);
+    if (!p.tile) { p.tile = addTile(id, name, p.stream, false); p.video = p.tile.querySelector('video'); }
+    else p.video.srcObject = p.stream;
+    connectRecAudio(p.stream); layout();
+  };
+  pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed') toast('Connection to ' + name + ' failed. A TURN server may be needed.', 6000); };
+  return p;
+}
+async function onSignal(from, d) {
+  const p = peers.get(from); if (!p) return; const pc = p.pc;
+  try {
+    if (d.description) {
+      const collision = d.description.type === 'offer' && (p.making || pc.signalingState !== 'stable');
+      p.ignore = !p.polite && collision; if (p.ignore) return;
+      await pc.setRemoteDescription(d.description);
+      if (d.description.type === 'offer') { await pc.setLocalDescription(); wsSend({ type:'signal', to:from, data:{ description:pc.localDescription } }); }
+    } else if (d.candidate) {
+      try { await pc.addIceCandidate(d.candidate); } catch (e) { if (!p.ignore) console.warn(e); }
+    }
+  } catch (e) { console.warn('signal error', e); }
+}
+
+// ---------- Tiles / layout ----------
+function addTile(id, label, stream, local) {
+  const t = document.createElement('div'); t.className = 'tile'; t.dataset.id = id;
+  const v = document.createElement('video'); v.autoplay = true; v.playsInline = true; v.muted = local; v.srcObject = stream;
+  const l = document.createElement('div'); l.className = 'label'; l.textContent = label;
+  t.append(v, l); $('stage').append(t); if (local) { t.classList.add('local'); window.localTile = t; } return t;
+}
+function layout() {
+  const stage = $('stage'); const tiles = [...stage.children]; const n = tiles.length;
+  const anyShare = tiles.some(t => t.classList.contains('sharing'));
+  stage.classList.toggle('has-share', anyShare);
+  if (anyShare) { stage.style.gridTemplateColumns = ''; return; }
+  const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+  stage.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+}
+
+// ---------- Controls ----------
+function updateButtons() {
+  $('micBtn').textContent = micOn ? 'Mute' : 'Unmute'; $('micBtn').classList.toggle('on', !micOn);
+  $('camBtn').textContent = camOn ? 'Camera off' : 'Camera on';
+  $('shareBtn').textContent = sharing ? 'Stop sharing' : 'Share screen'; $('shareBtn').classList.toggle('on', sharing);
+  $('recBtn').textContent = recorder ? 'Stop recording' : 'Record'; $('recBtn').classList.toggle('danger', !!recorder);
+  $('trBtn').classList.toggle('on', trOn);
+}
+$('micBtn').onclick = () => { micOn = !micOn; localStream.getAudioTracks().forEach(t => t.enabled = micOn); updateButtons(); };
+$('camBtn').onclick = () => { const v = localStream.getVideoTracks()[0]; if (!v) return toast('No camera available'); camOn = !camOn; v.enabled = camOn; updateButtons(); };
+$('panelBtn').onclick = () => $('main').classList.toggle('withpanel');
+$('leaveBtn').onclick = async () => {
+  if (recorder) await stopRecording();
+  stopTranscript(); ws?.close(); peers.forEach(p => p.pc.close());
+  localStream?.getTracks().forEach(t => t.stop()); screenStream?.getTracks().forEach(t => t.stop());
+  location.href = '/';
+};
+$('inviteBtn').onclick = async () => {
+  const url = location.origin + '/r/' + ROOM + (TITLE ? '?t=' + encodeURIComponent(TITLE) : '');
+  const text = `Join our meeting${TITLE ? ' "' + TITLE + '"' : ''}: ${url}` + (CFG.needsCode ? '\n(You will need the team access code.)' : '');
+  if (navigator.share) { try { await navigator.share({ title: TITLE || 'Meeting invite', text, url }); return; } catch {} }
+  try { await navigator.clipboard.writeText(text); toast('Invitation copied. Paste it into chat or email.'); }
+  catch { prompt('Copy this invitation:', text); }
+  window.open('mailto:?subject=' + encodeURIComponent('Meeting invitation' + (TITLE ? ': ' + TITLE : '')) + '&body=' + encodeURIComponent(text), '_blank');
+};
+
+// ---------- Screen share ----------
+function setOutgoingVideo(track) {
+  peers.forEach(p => {
+    const s = p.pc.getSenders().find(x => x.track && x.track.kind === 'video');
+    if (s) s.replaceTrack(track).catch(() => {});
+    else if (track) p.pc.addTrack(track, localStream);
+  });
+}
+$('shareBtn').onclick = async () => {
+  if (sharing) return stopShare();
+  try {
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video:{ frameRate:15 }, audio:true });
+  } catch (e) { return toast('Screen share cancelled'); }
+  const vt = screenStream.getVideoTracks()[0]; sharing = true;
+  vt.onended = stopShare;
+  setOutgoingVideo(vt);
+  const lt = window.localTile; lt.querySelector('video').srcObject = screenStream; lt.classList.add('sharing');
+  if (screenStream.getAudioTracks()[0]) connectRecAudio(screenStream);
+  wsSend({ type:'sharing', on:true }); layout(); updateButtons();
+};
+function stopShare() {
+  if (!sharing) return; sharing = false;
+  screenStream?.getTracks().forEach(t => t.stop());
+  const cam = localStream.getVideoTracks()[0]; setOutgoingVideo(cam || null);
+  const lt = window.localTile; lt.querySelector('video').srcObject = localStream; lt.classList.remove('sharing');
+  wsSend({ type:'sharing', on:false }); layout(); updateButtons();
+}
+
+// ---------- Recording (composited canvas + mixed audio, saved locally) ----------
+let recorder = null, recChunks = [], recCanvas, recCtx, recTimer, audioCtx, audioDest; const recSources = new Map(); const remoteRec = {};
+function updateRecBadge() {
+  const any = !!recorder || Object.values(remoteRec).some(Boolean);
+  $('recBadge').style.display = any ? 'inline-block' : 'none';
+  $('recBadge').textContent = recorder ? '● REC (you)' : '● REC';
+}
+function connectRecAudio(stream) {
+  if (!audioCtx || !stream || recSources.has(stream.id + ':' + stream.getAudioTracks().length)) return;
+  if (!stream.getAudioTracks().length) return;
+  try { const src = audioCtx.createMediaStreamSource(stream); src.connect(audioDest); recSources.set(stream.id + ':' + stream.getAudioTracks().length, src); } catch {}
+}
+function drawFrame() {
+  const W = recCanvas.width, H = recCanvas.height, c = recCtx; c.fillStyle = '#000'; c.fillRect(0, 0, W, H);
+  const tiles = [...$('stage').children]; const share = tiles.find(t => t.classList.contains('sharing'));
+  const drawTile = (t, x, y, w, h) => {
+    const v = t.querySelector('video'); c.fillStyle = '#111'; c.fillRect(x, y, w, h);
+    if (v && v.videoWidth) { const r = Math.min(w / v.videoWidth, h / v.videoHeight); const dw = v.videoWidth * r, dh = v.videoHeight * r; c.drawImage(v, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh); }
+    c.fillStyle = 'rgba(0,0,0,.6)'; c.fillRect(x + 6, y + h - 26, 8 + c.measureText(t.querySelector('.label').textContent).width + 8, 20);
+    c.fillStyle = '#fff'; c.font = '14px sans-serif'; c.fillText(t.querySelector('.label').textContent, x + 10, y + h - 11);
+  };
+  if (share) {
+    const others = tiles.filter(t => t !== share); const sh = others.length ? 150 : 0;
+    drawTile(share, 0, 0, W, H - sh);
+    others.forEach((t, i) => { const w = Math.min(W / others.length, 260); drawTile(t, i * w, H - sh, w - 4, sh); });
+  } else {
+    const n = tiles.length, cols = n <= 1 ? 1 : n <= 4 ? 2 : 3, rows = Math.ceil(n / cols), w = W / cols, h = H / rows;
+    tiles.forEach((t, i) => drawTile(t, (i % cols) * w + 2, Math.floor(i / cols) * h + 2, w - 4, h - 4));
+  }
+}
+async function startRecording() {
+  if (!confirm('Start recording? Everyone in the meeting will see a REC indicator. The file is saved on your computer when you stop.')) return;
+  recCanvas = document.createElement('canvas'); recCanvas.width = 1280; recCanvas.height = 720; recCtx = recCanvas.getContext('2d');
+  audioCtx = new AudioContext(); audioDest = audioCtx.createMediaStreamDestination(); recSources.clear();
+  connectRecAudio(localStream); peers.forEach(p => connectRecAudio(p.stream)); if (screenStream) connectRecAudio(screenStream);
+  // Timer in a worker so recording keeps its frame rate when this tab is in the background.
+  const w = new Worker(URL.createObjectURL(new Blob(['setInterval(()=>postMessage(0),66)'], { type:'text/javascript' })));
+  w.onmessage = drawFrame; recTimer = w;
+  const out = new MediaStream([...recCanvas.captureStream(15).getVideoTracks(), ...audioDest.stream.getAudioTracks()]);
+  const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
+  recChunks = []; recorder = new MediaRecorder(out, { mimeType: mime, videoBitsPerSecond: 2_500_000 });
+  recorder.ondataavailable = e => e.data.size && recChunks.push(e.data);
+  recorder.start(5000); wsSend({ type:'recording', on:true }); updateRecBadge(); updateButtons();
+}
+function stopRecording() {
+  return new Promise(res => {
+    const r = recorder; recorder = null; recTimer?.terminate(); wsSend({ type:'recording', on:false });
+    r.onstop = () => {
+      const blob = new Blob(recChunks, { type: 'video/webm' }); const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = `meeting-${ROOM}-${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}.webm`; a.click();
+      audioCtx?.close(); audioCtx = null; recChunks = []; updateRecBadge(); updateButtons(); res();
+    };
+    r.stop();
+  });
+}
+$('recBtn').onclick = () => recorder ? stopRecording() : startRecording();
+
+// ---------- Live transcript (Web Speech API; each browser transcribes its own mic) ----------
+let rec, trOn = false;
+function addLine(name, text) {
+  transcriptLines.push({ t: new Date(), name, text });
+  const el = $('transcript'); if (transcriptLines.length === 1) { el.textContent = ''; el.classList.remove('muted'); }
+  el.textContent += `${name}: ${text}\n`; el.scrollTop = el.scrollHeight;
+}
+function startTranscript() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return toast('Live transcript needs Chrome or Edge', 4000);
+  trOn = true; $('main').classList.add('withpanel');
+  const go = () => {
+    rec = new SR(); rec.continuous = true; rec.interimResults = false; rec.lang = $('lang').value;
+    rec.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) {
+      const text = e.results[i][0].transcript.trim(); if (!text) continue; addLine(myName, text); wsSend({ type:'transcript', text }); } };
+    rec.onend = () => { if (trOn) setTimeout(go, 200); };
+    rec.onerror = e => { if (e.error === 'not-allowed') { trOn = false; updateButtons(); toast('Microphone permission blocked for speech recognition'); } };
+    try { rec.start(); } catch {}
+  };
+  go(); updateButtons();
+}
+function stopTranscript() { trOn = false; try { rec?.stop(); } catch {} updateButtons(); }
+$('trBtn').onclick = () => trOn ? stopTranscript() : startTranscript();
+$('lang').onchange = () => { if (trOn) { stopTranscript(); startTranscript(); } };
+
+const download = (name, text, type='text/plain') => { const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name; a.click(); };
+const transcriptText = () => transcriptLines.map(l => `[${l.t.toLocaleTimeString()}] ${l.name}: ${l.text}`).join('\n');
+$('dlTranscript').onclick = () => transcriptLines.length ? download(`transcript-${ROOM}.txt`, transcriptText()) : toast('Transcript is empty');
+
+// ---------- Claude notes ----------
+$('notesBtn').onclick = async () => {
+  if (!transcriptLines.length) return toast('No transcript yet. Turn on Transcript during the meeting.');
+  $('main').classList.add('withpanel'); $('notes').classList.remove('muted'); $('notes').textContent = 'Claude is writing the notes…';
+  $('notesBtn').disabled = true;
+  try {
+    const lang = { 'ar-EG':'Arabic', 'ja-JP':'Japanese', 'en-US':'English' }[$('lang').value];
+    const r = await fetch('/api/summarize', { method:'POST', headers:{ 'content-type':'application/json', 'x-access-code': store.get('code') },
+      body: JSON.stringify({ transcript: transcriptText(), title: TITLE || 'Team meeting ' + ROOM, language: lang }) });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || r.statusText);
+    notesMd = d.notes; $('notes').textContent = notesMd;
+  } catch (e) { $('notes').textContent = 'Could not get notes: ' + e.message; }
+  $('notesBtn').disabled = false;
+};
+$('dlNotes').onclick = () => notesMd ? download(`notes-${ROOM}.md`, notesMd, 'text/markdown') : toast('No notes yet');
+window.addEventListener('beforeunload', e => { if (recorder) { e.preventDefault(); e.returnValue = ''; } });
+</script>
+</body>
+</html>

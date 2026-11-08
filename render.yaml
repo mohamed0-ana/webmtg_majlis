@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: majlis
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false        # paste your key in the Render dashboard
+      - key: ACCESS_CODE
+        sync: false        # optional team password
